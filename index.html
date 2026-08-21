@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>เกมตรวจจับท่าทาง - Teachable Machine</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f4f7f6;
+            text-align: center;
+            margin: 0;
+            padding: 20px;
+        }
+        .container {
+            max-width: 700px;
+            margin: 0 auto;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+        #webcam-container {
+            margin: 15px 0;
+        }
+        canvas {
+            border-radius: 8px;
+            border: 3px solid #333;
+        }
+        .stats {
+            display: flex;
+            justify-content: space-around;
+            font-size: 1.2rem;
+            font-weight: bold;
+            margin-bottom: 15px;
+        }
+        .question-box {
+            font-size: 1.8rem;
+            color: #2c3e50;
+            background: #eef2f5;
+            padding: 15px;
+            border-radius: 8px;
+            margin: 15px 0;
+        }
+        button {
+            font-size: 1.1rem;
+            padding: 10px 25px;
+            background-color: #27ae60;
+            color: white;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+        }
+        button:hover {
+            background-color: #219150;
+        }
+        #status {
+            font-size: 1rem;
+            color: #7f8c8d;
+            height: 24px;
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <h1>เกมตรวจจับท่าทาง</h1>
+    
+    <div class="stats">
+        <div>เวลาเหลือ: <span id="timer" style="color: #e74c3c;">60</span> วินาที</div>
+        <div>คะแนน: <span id="score" style="color: #2980b9;">0</span> / 20</div>
+    </div>
+
+    <div class="question-box" id="question-box">กดปุ่ม "เริ่มเล่น" เพื่อเริ่มเกม</div>
+    <div id="status"></div>
+
+    <div id="webcam-container"></div>
+
+    <button id="start-btn" onclick="startGame()">เริ่มเล่น</button>
+</div>
+
+<!-- TensorFlow.js และ Teachable Machine Libraries -->
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@1.3.1/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/pose@0.8.3/dist/teachablemachine-pose.min.js"></script>
+
+<script>
+    const URL = "https://teachablemachine.withgoogle.com/models/R-27hNbMv/";
+    let model, webcam, ctx;
+    
+    // ตั้งค่ารายชื่อท่าทางให้ตรงกับ Class ใน Teachable Machine ของคุณ
+    // **หมายเหตุ: ให้แก้ไขข้อความในอาเรย์นี้ให้ตรงกับชื่อ Class ที่คุณตั้งไว้ในโมเดล**
+    const allQuestions = ["Class 1", "Class 2", "Class 3", "Class 4"]; 
+    
+    let currentQuestions = [];
+    let currentQuestionIndex = 0;
+    let score = 0;
+    let timeLeft = 60;
+    let timerInterval = null;
+    let isPlaying = false;
+    let isProcessingCorrect = false;
+
+    async function initWebcam() {
+        const modelURL = URL + "model.json";
+        const metadataURL = URL + "metadata.json";
+
+        document.getElementById("status").innerText = "กำลังโหลดโมเดล...";
+        model = await tmPose.load(modelURL, metadataURL);
+
+        const size = 350;
+        const flip = true;
+        webcam = new tmPose.Webcam(size, size, flip);
+        await webcam.setup();
+        await webcam.play();
+        
+        document.getElementById("webcam-container").appendChild(webcam.canvas);
+        ctx = webcam.canvas.getContext("2d");
+        document.getElementById("status").innerText = "กล้องพร้อมใช้งานแล้ว!";
+    }
+
+    async function startGame() {
+        if (!webcam) {
+            await initWebcam();
+        }
+
+        // รีเซ็ตค่าเกม
+        score = 0;
+        timeLeft = 60;
+        currentQuestionIndex = 0;
+        isPlaying = true;
+        isProcessingCorrect = false;
+
+        document.getElementById("score").innerText = score;
+        document.getElementById("timer").innerText = timeLeft;
+        document.getElementById("start-btn").style.display = "none";
+
+        // สุ่มคำถามมา 20 ข้อ (หากมี Class น้อยกว่า 20 จะทำการสุ่มซ้ำให้ครบ 20 ข้อ)
+        currentQuestions = [];
+        for (let i = 0; i < 20; i++) {
+            const randomIndex = Math.floor(Math.random() * allQuestions.length);
+            currentQuestions.push(allQuestions[randomIndex]);
+        }
+
+        showQuestion();
+
+        // ตัวนับเวลาถอยหลัง
+        clearInterval(timerInterval);
+        timerInterval = setInterval(() => {
+            timeLeft--;
+            document.getElementById("timer").innerText = timeLeft;
+
+            if (timeLeft <= 0) {
+                endGame("หมดเวลาแล้ว!");
+            }
+        }, 1000);
+
+        window.requestAnimationFrame(loop);
+    }
+
+    function showQuestion() {
+        if (currentQuestionIndex < 20) {
+            document.getElementById("question-box").innerText = `ข้อที่ ${currentQuestionIndex + 1}: ทำท่า "${currentQuestions[currentQuestionIndex]}"`;
+        } else {
+            endGame("คุณทำครบทั้ง 20 ข้อแล้ว! ยินดีด้วย!");
+        }
+    }
+
+    async function loop() {
+        if (isPlaying) {
+            webcam.update();
+            await predict();
+            window.requestAnimationFrame(loop);
+        }
+    }
+
+    async function predict() {
+        const { pose, posenetOutput } = await model.estimatePose(webcam.canvas);
+        const prediction = await model.predict(posenetOutput);
+
+        // วาดภาพจากกล้องและเส้น Skeleton
+        if (pose) {
+            ctx.drawImage(webcam.canvas, 0, 0);
+            tmPose.drawKeypoints(pose.keypoints, 0.5, ctx);
+            tmPose.drawSkeleton(pose.keypoints, 0.5, ctx);
+        }
+
+        if (!isPlaying || isProcessingCorrect) return;
+
+        const targetClass = currentQuestions[currentQuestionIndex];
+
+        // ตรวจหาค่าความมั่นใจ (Probability) ของท่าทางปัจจุบัน
+        for (let i = 0; i < prediction.length; i++) {
+            if (prediction[i].className === targetClass) {
+                // หากความแม่นยำมากกว่า 85% ถือว่าทำถูกต้อง
+                if (prediction[i].probability > 0.85) {
+                    handleCorrectAnswer();
+                } else {
+                    document.getElementById("status").innerText = `กำลังตรวจจับ... (ความแม่นยำ: ${(prediction[i].probability * 100).toFixed(0)}%)`;
+                }
+            }
+        }
+    }
+
+    function handleCorrectAnswer() {
+        isProcessingCorrect = true;
+        score++;
+        document.getElementById("score").innerText = score;
+        document.getElementById("status").innerText = "ถูกต้อง! เปลี่ยนข้อถัดไป...";
+
+        // หน่วงเวลา 1 วินาทีก่อนไปข้อถัดไป เพื่อไม่ให้ข้ามข้อไวเกินไป
+        setTimeout(() => {
+            currentQuestionIndex++;
+            showQuestion();
+            document.getElementById("status").innerText = "";
+            isProcessingCorrect = false;
+        }, 1000);
+    }
+
+    function endGame(message) {
+        isPlaying = false;
+        clearInterval(timerInterval);
+        document.getElementById("question-box").innerText = `${message} สรุปคะแนน: ${score} / 20`;
+        document.getElementById("status").innerText = "";
+        document.getElementById("start-btn").style.display = "inline-block";
+        document.getElementById("start-btn").innerText = "เล่นใหม่อีกครั้ง";
+    }
+</script>
+
+</body>
+</html>
